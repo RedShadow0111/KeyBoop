@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app
+        run: ./Scripts/package-app.sh
+      - name: Zip
+        run: ditto -c -k --keepParent dist/KeyBoop.app dist/KeyBoop-macos.zip
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/KeyBoop-macos.zip

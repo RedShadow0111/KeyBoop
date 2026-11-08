@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>KeyBoop</string>
+	<key>CFBundleDisplayName</key>
+	<string>KeyBoop</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.keyboop.app</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleExecutable</key>
+	<string>KeyBoop</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSInputMonitoringUsageDescription</key>
+	<string>KeyBoop смотрит нажатия клавиш, чтобы заметить слово, набранное не в той раскладке. Текст никуда не отправляется.</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>KeyBoop вставляет исправленное слово и определяет активное приложение. Текст никуда не отправляется.</string>
+</dict>
+</plist>
