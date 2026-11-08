@@ -132,11 +132,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let host = NSHostingController(rootView: SettingsView(model: model))
             let window = NSWindow(contentViewController: host)
-            window.title = "KeyBoop"
-            window.styleMask = [.titled, .closable, .miniaturizable]
+            window.title = "Настройки KeyBoop"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.isReleasedWhenClosed = false
-            host.view.layoutSubtreeIfNeeded()
-            window.setContentSize(host.view.fittingSize)
+            window.setContentSize(NSSize(width: 680, height: 360))
+            window.minSize = NSSize(width: 640, height: 320)
             settingsWindow = window
         }
         settingsWindow?.center()

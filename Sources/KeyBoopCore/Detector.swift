@@ -68,7 +68,12 @@ public struct Detector: Sendable {
         let alternateInDictionary = knowledge.contains(alternateLetters, alternateLayout)
         let dotIsLetter = alternateInDictionary
             || (alternateLetters.count >= 5 && knowledge.isPlausible(alternateLetters, alternateLayout))
-        if StopRules.blocked(raw: observation.currentRaw, letters: currentLetters, allowDot: dotIsLetter) { return .keep }
+        if StopRules.blocked(
+            raw: observation.currentRaw,
+            letters: currentLetters,
+            allowDot: dotIsLetter,
+            allowInnerCapitals: alternateInDictionary
+        ) { return .keep }
         if exceptions.contains(currentLetters) || exceptions.contains(alternateLetters) { return .keep }
         if short {
             return .replace(alternateLayout)
@@ -90,7 +95,7 @@ public struct Detector: Sendable {
             if !knowledge.isPlausible(currentLetters, observation.currentLayout), margin >= 1 {
                 return .replace(alternateLayout)
             }
-            if margin >= 2.5 {
+            if margin >= 1 {
                 return .replace(alternateLayout)
             }
             return .keep
@@ -121,11 +126,11 @@ public struct Detector: Sendable {
 }
 
 enum StopRules {
-    static func blocked(raw: String, letters: String, allowDot: Bool) -> Bool {
+    static func blocked(raw: String, letters: String, allowDot: Bool, allowInnerCapitals: Bool = false) -> Bool {
         if raw.contains(where: \.isNumber) { return true }
         if raw.contains(".") && !allowDot { return true }
         if raw.contains("@") || raw.contains("/") || raw.contains("\\") { return true }
-        if camelCase(raw) { return true }
+        if !allowInnerCapitals && camelCase(raw) { return true }
         return mixedScripts(letters)
     }
 

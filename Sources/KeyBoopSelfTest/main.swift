@@ -31,6 +31,8 @@ final class EngineChecks {
     func runAll() throws {
         try wrongEnglishBecomesRussianOnSpace()
         try wrongRussianBecomesEnglishOnSpace()
+        try githubTypedInRussianBecomesGithub()
+        try mixedCaseDictionaryWordKeepsItsCapitals()
         try capitalizationIsPreserved()
         try realWordsStay()
         try shortTokensAndIdentifiersStay()
@@ -64,6 +66,26 @@ final class EngineChecks {
         let text = screen(engine, meant: "hello", meantLayout: .en, boundary: space)
         try expect(text == "hello ", "screen \(text)")
         try expect(engine.systemLayout == .en, "layout")
+    }
+
+    func githubTypedInRussianBecomesGithub() throws {
+        let engine = makeEngine(layout: .ru)
+        let text = screen(engine, meant: "github", meantLayout: .en, boundary: space)
+        try expect(text == "github ", "github \(text)")
+        try expect(engine.systemLayout == .en, "github layout")
+        let own = makeEngine(layout: .en)
+        try expect(feed(own, meant: "github", meantLayout: .en, boundary: space) == nil, "github stays")
+    }
+
+    func mixedCaseDictionaryWordKeepsItsCapitals() throws {
+        let engine = makeEngine(layout: .ru)
+        let text = screen(engine, meant: "GitHub", meantLayout: .en, boundary: space)
+        try expect(text == "GitHub ", "GitHub \(text)")
+        try expect(engine.systemLayout == .en, "GitHub layout")
+        let own = makeEngine(layout: .en)
+        try expect(feed(own, meant: "GitHub", meantLayout: .en, boundary: space) == nil, "GitHub stays")
+        let identifier = makeEngine(layout: .en)
+        try expect(feed(identifier, meant: "myValue", meantLayout: .en, boundary: space) == nil, "myValue")
     }
 
     func capitalizationIsPreserved() throws {

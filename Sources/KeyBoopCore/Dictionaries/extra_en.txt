@@ -5,6 +5,8 @@ css
 cuda
 dns
 gpu
+github
+gitlab
 gpt
 html
 http

@@ -11,6 +11,7 @@ final class EventMonitor {
     weak var model: AppModel?
 
     private var port: CFMachPort?
+    private var shiftSelection: (text: String, element: AXUIElement)?
     private var runLoopSource: CFRunLoopSource?
     private(set) var isRunning = false
 
@@ -101,15 +102,26 @@ final class EventMonitor {
         model.noteReady()
         var selection: String?
         var element: AXUIElement?
-        if case .shift(down: false) = input, let found = SelectionReader.current() {
-            selection = found.text
-            element = found.element
+        switch input {
+        case .shift(down: true):
+            shiftSelection = SelectionReader.current()
+        case .shift(down: false):
+            let found = SelectionReader.current() ?? shiftSelection
+            selection = found?.text
+            element = found?.element
+        default:
+            shiftSelection = nil
         }
         if let plan = engine.handle(input, selection: selection) {
-            if plan.reason == .selection, let element {
-                SystemLayouts.select(plan.layout)
-                if !SelectionReader.replace(element, with: plan.insert) {
-                    replayer.play(plan) { _ in }
+            if plan.reason == .selection {
+                let previous = selection ?? ""
+                let replaced = element.map { SelectionReader.replace($0, with: plan.insert, replacing: previous) } ?? false
+                if replaced {
+                    SystemLayouts.select(plan.layout)
+                } else {
+                    replayer.play(plan) { layout in
+                        SystemLayouts.select(layout)
+                    }
                 }
             } else {
                 replayer.play(plan) { layout in

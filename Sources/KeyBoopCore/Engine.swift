@@ -168,11 +168,21 @@ public final class Engine: @unchecked Sendable {
         let wholeWord = alternateLetters.count >= 3 && detector.containsWord(alternateLetters, target)
         guard short || wholeWord else { return nil }
         if exceptions.contains(currentLetters) || exceptions.contains(alternateLetters) { return nil }
-        if StopRules.blocked(raw: currentRaw, letters: currentLetters, allowDot: wholeWord) { return nil }
+        if StopRules.blocked(raw: currentRaw, letters: currentLetters, allowDot: wholeWord, allowInnerCapitals: wholeWord) { return nil }
         if short {
             return commit(strokes: open, trailing: [], from: from, to: target, reason: .auto, now: now)
         }
-        guard detector.impossible(currentLetters, from) else { return nil }
+        if detector.impossible(currentLetters, from) {
+            return commit(strokes: open, trailing: [], from: from, to: target, reason: .auto, now: now)
+        }
+        let observation = Observation(
+            currentRaw: currentRaw,
+            alternateRaw: alternateRaw,
+            currentLayout: from,
+            previousLayout: tokens.last?.display,
+            blockedByContext: false
+        )
+        guard case .replace = detector.decide(observation) else { return nil }
         return commit(strokes: open, trailing: [], from: from, to: target, reason: .auto, now: now)
     }
 
