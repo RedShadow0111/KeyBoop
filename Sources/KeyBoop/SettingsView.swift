@@ -181,6 +181,7 @@ struct SettingsView: View {
                     .settingsBody()
                 Toggle("Автоисправление", isOn: $model.enabled)
                 Toggle("Пауза", isOn: $model.paused)
+                Toggle("Один Shift переводит слово или выделение", isOn: $model.singleShiftEnabled)
                 Toggle("Двойной и тройной Shift", isOn: $model.gesturesEnabled)
             }
             settingsCard {
@@ -314,9 +315,9 @@ struct SettingsView: View {
 
     private var newsPage: some View {
         settingsCard {
-            Text("Версия 1.2.3")
+            Text("Версия 1.2.4")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Проверка обновления повторяет запрос, если GitHub отвечает 504, и берёт файл прямо со страницы релиза.")
+            Text("Проверка обновлений идёт через GitHub CLI, если прямой запрос блокируется. Один Shift переводит слово или выделение.")
                 .settingsBody()
             Button("Все версии на GitHub") { NSWorkspace.shared.open(KeyBoopLinks.releases) }
         }
@@ -370,7 +371,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.4"
     }
 }
 

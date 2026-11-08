@@ -42,6 +42,7 @@ final class EngineChecks {
         try pathIsNotConverted()
         try undoRemembersTheWord()
         try doubleShiftConvertsTheLastWord()
+        try singleShiftConvertsTheLastWord()
         try tripleShiftConvertsThePhrase()
         try backspaceKeepsTheWordInSync()
         try commonWordsAreCorrected()
@@ -199,6 +200,16 @@ final class EngineChecks {
         try expect(plan?.reason == .manualWord, "manual \(String(describing: plan))")
         try expect(plan?.layout == .ru, "layout")
         try expect(plan?.insert == "руддщ ", "text \(plan?.insert ?? "nil")")
+    }
+
+    func singleShiftConvertsTheLastWord() throws {
+        let engine = makeEngine(layout: .en)
+        engine.singleShiftEnabled = true
+        try expect(feed(engine, meant: "hello", meantLayout: .en, boundary: space) == nil, "hello stays")
+        let now = Date(timeIntervalSince1970: 1_700_000_150)
+        _ = engine.handle(.shift(down: true), now: now)
+        let plan = engine.handle(.shift(down: false), now: now)
+        try expect(plan?.insert == "руддщ ", "single \(plan?.insert ?? "nil")")
     }
 
     func tripleShiftConvertsThePhrase() throws {

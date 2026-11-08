@@ -39,6 +39,7 @@ public final class Engine: @unchecked Sendable {
     private let exceptions: ExceptionList
 
     public var gesturesEnabled = true
+    public var singleShiftEnabled = false
     public var disabledShortWords: Set<String> = [] {
         didSet { detector.disabledShortWords = disabledShortWords }
     }
@@ -275,6 +276,12 @@ public final class Engine: @unchecked Sendable {
             if selected != nil { return nil }
             let target = pendingGestureTarget ?? systemLayout.opposite
             return convertPhrase(to: target)
+        }
+        if cleanShiftUps.count == 1 && singleShiftEnabled {
+            if let selected {
+                return convertSelection(selected)
+            }
+            return convertLastWord(now: now)
         }
         if cleanShiftUps.count == 2 {
             if let selected {

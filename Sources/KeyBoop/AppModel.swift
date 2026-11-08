@@ -24,6 +24,12 @@ final class AppModel: ObservableObject {
             engine?.gesturesEnabled = gesturesEnabled
         }
     }
+    @Published var singleShiftEnabled: Bool {
+        didSet {
+            persist()
+            engine?.singleShiftEnabled = singleShiftEnabled
+        }
+    }
     @Published var launchAtLogin: Bool {
         didSet { applyLoginItem() }
     }
@@ -72,6 +78,7 @@ final class AppModel: ObservableObject {
         let storedExcluded = defaults.stringArray(forKey: "excludedBundles")
         enabled = defaults.object(forKey: "enabled") as? Bool ?? true
         gesturesEnabled = defaults.object(forKey: "gesturesEnabled") as? Bool ?? true
+        singleShiftEnabled = defaults.object(forKey: "singleShiftEnabled") as? Bool ?? true
         excluded = storedExcluded ?? Self.defaultExcluded
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
         disabledShortWords = Set(defaults.stringArray(forKey: "disabledShortWords") ?? [])
@@ -82,6 +89,7 @@ final class AppModel: ObservableObject {
     func attach(engine: Engine) {
         self.engine = engine
         engine.gesturesEnabled = gesturesEnabled
+        engine.singleShiftEnabled = singleShiftEnabled
         engine.disabledShortWords = disabledShortWords
         if !enabled { engine.reset() }
     }
@@ -303,6 +311,7 @@ final class AppModel: ObservableObject {
     private func persist() {
         defaults.set(enabled, forKey: "enabled")
         defaults.set(gesturesEnabled, forKey: "gesturesEnabled")
+        defaults.set(singleShiftEnabled, forKey: "singleShiftEnabled")
         defaults.set(excluded, forKey: "excludedBundles")
         defaults.set(launchAtLogin, forKey: "launchAtLogin")
         defaults.set(Array(disabledShortWords), forKey: "disabledShortWords")
@@ -333,7 +342,7 @@ final class AppModel: ObservableObject {
     }
 
     private func fetchUpdate(report: Bool) async {
-        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.3"
+        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.4"
         switch await Self.findUpdate(newerThan: local) {
         case .update(let version, let url):
             updateVersion = version
@@ -348,7 +357,7 @@ final class AppModel: ObservableObject {
             updateAssetURL = nil
             if report { updateMessage = "На GitHub пока нет релизов. Сейчас версия \(local)." }
         case .unavailable:
-            if report { updateMessage = "GitHub временно недоступен. Повторите через минуту." }
+            if report { updateMessage = "Нет соединения с GitHub. Разрешите KeyBoop доступ в сеть." }
         }
     }
 
@@ -363,7 +372,74 @@ final class AppModel: ObservableObject {
             }
             return result
         }
-        return await releaseFromWebsite(newerThan: local)
+        let cli = await releasesFromGitHubCLI(newerThan: local)
+        if case .unavailable = cli {
+            return await releaseFromWebsite(newerThan: local)
+        }
+        return cli
+    }
+
+    private static func releasesFromGitHubCLI(newerThan local: String) async -> UpdateLookup {
+        guard let gh = githubCLI() else { return .unavailable }
+        let process = Process()
+        process.executableURL = gh
+        process.arguments = ["api", "repos/RedShadow0111/KeyBoop/releases?per_page=5"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return .unavailable }
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+            return match(releases, newerThan: local)
+        } catch {
+            return .unavailable
+        }
+    }
+
+    private static func match(_ releases: [GitHubRelease], newerThan local: String) -> UpdateLookup {
+        if releases.isEmpty { return .empty }
+        if let found = releases.compactMap({ release -> (String, URL)? in
+            let remote = release.tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+            guard isNewer(remote, than: local),
+                  let asset = release.assets.first(where: { $0.name == "KeyBoop-macos.zip" }),
+                  let assetURL = URL(string: asset.browser_download_url)
+            else { return nil }
+            return (remote, assetURL)
+        }).first {
+            return .update(found.0, found.1)
+        }
+        return .current
+    }
+
+    private static func downloadWithGitHubCLI(version: String, to zip: URL) -> Bool {
+        guard let gh = githubCLI() else { return false }
+        let process = Process()
+        process.executableURL = gh
+        process.arguments = [
+            "release", "download", "v\(version)",
+            "--repo", "RedShadow0111/KeyBoop",
+            "--pattern", "KeyBoop-macos.zip",
+            "--dir", zip.deletingLastPathComponent().path,
+            "--clobber",
+        ]
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+        return process.terminationStatus == 0 && FileManager.default.fileExists(atPath: zip.path)
+    }
+
+    private static func githubCLI() -> URL? {
+        for path in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
+        where FileManager.default.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
     }
 
     private static func releasesFromAPI(newerThan local: String) async -> UpdateLookup {
@@ -371,25 +447,14 @@ final class AppModel: ObservableObject {
             return .unavailable
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 12
+        request.timeoutInterval = 6
         request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return .unavailable }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-            if releases.isEmpty { return .empty }
-            if let match = releases.compactMap({ release -> (String, URL)? in
-                let remote = release.tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                guard isNewer(remote, than: local),
-                      let asset = release.assets.first(where: { $0.name == "KeyBoop-macos.zip" }),
-                      let assetURL = URL(string: asset.browser_download_url)
-                else { return nil }
-                return (remote, assetURL)
-            }).first {
-                return .update(match.0, match.1)
-            }
-            return .current
+            return match(releases, newerThan: local)
         } catch {
             return .unavailable
         }
@@ -431,17 +496,25 @@ final class AppModel: ObservableObject {
         guard let url = updateAssetURL else { return }
         let destination = Bundle.main.bundleURL
         do {
-            var request = URLRequest(url: url)
-            request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
-            let (file, response) = try await Self.download(request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                updateMessage = "Не удалось скачать обновление"
-                return
-            }
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("KeyBoop-update-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let zip = folder.appendingPathComponent("KeyBoop-macos.zip")
-            try FileManager.default.moveItem(at: file, to: zip)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 20
+            request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
+            var saved = false
+            if let (file, response) = try? await Self.download(request),
+               let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                try FileManager.default.moveItem(at: file, to: zip)
+                saved = true
+            }
+            if !saved, let version = updateVersion, Self.downloadWithGitHubCLI(version: version, to: zip) {
+                saved = true
+            }
+            guard saved else {
+                updateMessage = "Не удалось скачать обновление"
+                return
+            }
             let unzip = Process()
             unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
             unzip.arguments = ["-q", zip.path, "-d", folder.path]
