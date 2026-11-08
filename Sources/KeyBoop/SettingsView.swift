@@ -314,9 +314,9 @@ struct SettingsView: View {
 
     private var newsPage: some View {
         settingsCard {
-            Text("Версия 1.2.2")
+            Text("Версия 1.2.3")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Окно настроек зафиксировано по высоте. «ПшеРги» исправляется в GitHub, даже если Shift приходит отдельной клавишей.")
+            Text("Проверка обновления повторяет запрос, если GitHub отвечает 504, и берёт файл прямо со страницы релиза.")
                 .settingsBody()
             Button("Все версии на GitHub") { NSWorkspace.shared.open(KeyBoopLinks.releases) }
         }
@@ -370,7 +370,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.2"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.3"
     }
 }
 

@@ -333,44 +333,98 @@ final class AppModel: ObservableObject {
     }
 
     private func fetchUpdate(report: Bool) async {
-        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.2"
-        guard let url = URL(string: "https://api.github.com/repos/RedShadow0111/KeyBoop/releases?per_page=10") else { return }
+        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.3"
+        switch await Self.findUpdate(newerThan: local) {
+        case .update(let version, let url):
+            updateVersion = version
+            updateAssetURL = url
+            updateMessage = "Доступна версия \(version)"
+        case .current:
+            updateVersion = nil
+            updateAssetURL = nil
+            if report { updateMessage = "Версия \(local) — последняя" }
+        case .empty:
+            updateVersion = nil
+            updateAssetURL = nil
+            if report { updateMessage = "На GitHub пока нет релизов. Сейчас версия \(local)." }
+        case .unavailable:
+            if report { updateMessage = "GitHub временно недоступен. Повторите через минуту." }
+        }
+    }
+
+    private static func findUpdate(newerThan local: String) async -> UpdateLookup {
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+            }
+            let result = await releasesFromAPI(newerThan: local)
+            if case .unavailable = result {
+                continue
+            }
+            return result
+        }
+        return await releaseFromWebsite(newerThan: local)
+    }
+
+    private static func releasesFromAPI(newerThan local: String) async -> UpdateLookup {
+        guard let url = URL(string: "https://api.github.com/repos/RedShadow0111/KeyBoop/releases?per_page=5") else {
+            return .unavailable
+        }
         var request = URLRequest(url: url)
+        request.timeoutInterval = 12
         request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 20
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return }
-            guard http.statusCode == 200 else {
-                if report { updateMessage = "GitHub ответил \(http.statusCode)" }
-                return
-            }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return .unavailable }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-            let match = releases.compactMap { release -> (String, URL)? in
+            if releases.isEmpty { return .empty }
+            if let match = releases.compactMap({ release -> (String, URL)? in
                 let remote = release.tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                guard Self.isNewer(remote, than: local),
+                guard isNewer(remote, than: local),
                       let asset = release.assets.first(where: { $0.name == "KeyBoop-macos.zip" }),
                       let assetURL = URL(string: asset.browser_download_url)
                 else { return nil }
                 return (remote, assetURL)
-            }.first
-            if let match {
-                updateVersion = match.0
-                updateAssetURL = match.1
-                updateMessage = "Доступна версия \(match.0)"
-            } else {
-                updateVersion = nil
-                updateAssetURL = nil
-                if report {
-                    updateMessage = releases.isEmpty
-                        ? "На GitHub пока нет релизов. Сейчас версия \(local)."
-                        : "Версия \(local) — последняя"
-                }
+            }).first {
+                return .update(match.0, match.1)
             }
+            return .current
         } catch {
-            if report { updateMessage = "Не удалось проверить обновление" }
+            return .unavailable
         }
+    }
+
+    private static func releaseFromWebsite(newerThan local: String) async -> UpdateLookup {
+        guard let page = URL(string: "https://github.com/RedShadow0111/KeyBoop/releases/latest/download/KeyBoop-macos.zip") else {
+            return .unavailable
+        }
+        let capture = ReleaseRedirect()
+        let session = URLSession(configuration: .ephemeral, delegate: capture, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: page)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 12
+        request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...399).contains(http.statusCode) else {
+                return .unavailable
+            }
+            let hops = capture.hops + [http.url].compactMap { $0 }
+            guard let version = hops.compactMap({ Self.tagVersion(in: $0) }).first else { return .unavailable }
+            guard isNewer(version, than: local) else { return .current }
+            return .update(version, page)
+        } catch {
+            return .unavailable
+        }
+    }
+
+    nonisolated private static func tagVersion(in url: URL) -> String? {
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard let index = parts.firstIndex(of: "download"), index + 1 < parts.count else { return nil }
+        let tag = parts[index + 1].trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+        return tag.isEmpty ? nil : tag
     }
 
     private func downloadAndReplace() async {
@@ -379,7 +433,7 @@ final class AppModel: ObservableObject {
         do {
             var request = URLRequest(url: url)
             request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")
-            let (file, response) = try await URLSession.shared.download(for: request)
+            let (file, response) = try await Self.download(request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 updateMessage = "Не удалось скачать обновление"
                 return
@@ -419,6 +473,21 @@ final class AppModel: ObservableObject {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    private static func download(_ request: URLRequest) async throws -> (URL, URLResponse) {
+        var lastError: Error?
+        for attempt in 0..<2 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+            }
+            do {
+                return try await URLSession.shared.download(for: request)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? URLError(.cannotConnectToHost)
+    }
+
     static func isNewer(_ remote: String, than local: String) -> Bool {
         let left = remote.split(separator: ".").map { Int($0) ?? 0 }
         let right = local.split(separator: ".").map { Int($0) ?? 0 }
@@ -436,6 +505,29 @@ final class AppModel: ObservableObject {
             guard let url = URL(string: raw) else { continue }
             if NSWorkspace.shared.open(url) { return }
         }
+    }
+}
+
+private enum UpdateLookup {
+    case update(String, URL)
+    case current
+    case empty
+    case unavailable
+}
+
+private final class ReleaseRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    var hops: [URL] = []
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        if let url = request.url {
+            hops.append(url)
+        }
+        return request
     }
 }
 
