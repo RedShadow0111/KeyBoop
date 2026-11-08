@@ -78,7 +78,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: 620, height: 300)
     }
 
     private var sidebar: some View {
@@ -142,8 +142,8 @@ struct SettingsView: View {
             }
             .font(.system(size: 12))
             .foregroundStyle(selected ? Color.white : Color.primary)
-            .padding(.horizontal, 8)
-            .frame(height: 22)
+            .padding(.horizontal, 6)
+            .frame(height: 18)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(selected ? Color.accentColor : Color.clear)
@@ -314,9 +314,9 @@ struct SettingsView: View {
 
     private var newsPage: some View {
         settingsCard {
-            Text("Версия 1.2.1")
+            Text("Версия 1.2.2")
                 .font(.system(size: 13, weight: .semibold))
-            Text("Компактные настройки. Словарные слова с разным регистром, вроде GitHub, исправляются и сохраняют заглавные буквы.")
+            Text("Окно настроек зафиксировано по высоте. «ПшеРги» исправляется в GitHub, даже если Shift приходит отдельной клавишей.")
                 .settingsBody()
             Button("Все версии на GitHub") { NSWorkspace.shared.open(KeyBoopLinks.releases) }
         }
@@ -370,7 +370,7 @@ struct SettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.2"
     }
 }
 

@@ -118,6 +118,7 @@ public final class Engine: @unchecked Sendable {
     }
 
     private func strokeIn(_ stroke: Stroke, now: Date) -> ReplacePlan? {
+        if Self.isModifier(stroke.keyCode) { return nil }
         if isWordCharacter(stroke) || isDigit(stroke) || isURLContinuation(stroke) {
             if open.isEmpty { openLayout = systemLayout }
             open.append(stroke)
@@ -453,6 +454,15 @@ public final class Engine: @unchecked Sendable {
             if glyph.isLetter || glyph.isDigit { return false }
         }
         return sawGlyph
+    }
+
+    static func isModifier(_ code: UInt16) -> Bool {
+        switch code {
+        case 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F:
+            return true
+        default:
+            return false
+        }
     }
 
     static func isURL(_ text: String) -> Bool {

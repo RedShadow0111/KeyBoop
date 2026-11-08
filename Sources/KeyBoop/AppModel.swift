@@ -333,7 +333,7 @@ final class AppModel: ObservableObject {
     }
 
     private func fetchUpdate(report: Bool) async {
-        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.1"
+        let local = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.2"
         guard let url = URL(string: "https://api.github.com/repos/RedShadow0111/KeyBoop/releases?per_page=10") else { return }
         var request = URLRequest(url: url)
         request.setValue("KeyBoop", forHTTPHeaderField: "User-Agent")

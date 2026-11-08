@@ -84,6 +84,9 @@ final class EngineChecks {
         try expect(engine.systemLayout == .en, "GitHub layout")
         let own = makeEngine(layout: .en)
         try expect(feed(own, meant: "GitHub", meantLayout: .en, boundary: space) == nil, "GitHub stays")
+        let typed = makeEngine(layout: .ru)
+        let typedText = typeWithShiftKeys(typed, meant: "GitHub", meantLayout: .en)
+        try expect(typedText == "GitHub ", "shift keys \(typedText)")
         let identifier = makeEngine(layout: .en)
         try expect(feed(identifier, meant: "myValue", meantLayout: .en, boundary: space) == nil, "myValue")
     }
@@ -467,6 +470,29 @@ final class EngineChecks {
             plan = next
         }
         return plan
+    }
+
+    private func typeWithShiftKeys(_ engine: Engine, meant word: String, meantLayout: LayoutID) -> String {
+        let strokes = map.strokes(for: word, layout: meantLayout) ?? []
+        let shiftKey = Stroke(keyCode: KeyCode.shift, shift: true)
+        var text = ""
+        for stroke in strokes + [space] {
+            if stroke.shift {
+                _ = engine.handle(.key(shiftKey, command: false, option: false, control: false))
+                _ = engine.handle(.shift(down: true))
+            }
+            let before = engine.systemLayout
+            text += render([stroke], before)
+            if let plan = engine.handle(.key(stroke, command: false, option: false, control: false)) {
+                let drop = min(plan.deleteCount, text.count)
+                text.removeLast(drop)
+                text += plan.insert
+            }
+            if stroke.shift {
+                _ = engine.handle(.shift(down: false))
+            }
+        }
+        return text
     }
 
     private func screen(

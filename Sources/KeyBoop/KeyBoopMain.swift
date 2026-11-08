@@ -131,12 +131,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover?.performClose(nil)
         if settingsWindow == nil {
             let host = NSHostingController(rootView: SettingsView(model: model))
+            host.sizingOptions = []
             let window = NSWindow(contentViewController: host)
             window.title = "Настройки KeyBoop"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 680, height: 360))
-            window.minSize = NSSize(width: 640, height: 320)
+            let size = NSSize(width: 620, height: 300)
+            window.setContentSize(size)
+            window.contentMinSize = size
+            window.contentMaxSize = size
             settingsWindow = window
         }
         settingsWindow?.center()
