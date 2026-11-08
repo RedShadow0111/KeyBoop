@@ -45,31 +45,32 @@ final class EngineChecks {
         try commonWordsAreCorrected()
         try heldOutRecallAndFalsePositives()
         try systemLetterKeysMatchTheReferenceMap()
+        try unfinishedWordSwitchesBeforeSpace()
+        try ghostAndMacStayWhileTyping()
+        try shortWordsSwitchBeforeSpace()
+        try selectionDoubleShiftFlipsTheHighlight()
+        try bufferStaysBounded()
     }
 
     func wrongEnglishBecomesRussianOnSpace() throws {
         let engine = makeEngine(layout: .en)
-        let plan = feed(engine, meant: "привет", meantLayout: .ru, boundary: space)
-        try expect(plan?.insert == "привет ", "insert \(plan?.insert ?? "nil")")
-        try expect(plan?.layout == .ru, "layout")
-        try expect(plan?.reason == .auto, "reason \(String(describing: plan?.reason))")
-        try expect(plan?.deleteCount == "ghbdtn ".count, "delete \(plan?.deleteCount ?? -1)")
+        let text = screen(engine, meant: "привет", meantLayout: .ru, boundary: space)
+        try expect(text == "привет ", "screen \(text)")
+        try expect(engine.systemLayout == .ru, "layout")
     }
 
     func wrongRussianBecomesEnglishOnSpace() throws {
         let engine = makeEngine(layout: .ru)
-        let plan = feed(engine, meant: "hello", meantLayout: .en, boundary: space)
-        try expect(plan?.insert == "hello ", "insert \(plan?.insert ?? "nil")")
-        try expect(plan?.layout == .en, "layout")
-        try expect(plan?.reason == .auto, "reason")
-        try expect(plan?.deleteCount == "руддщ ".count, "delete")
+        let text = screen(engine, meant: "hello", meantLayout: .en, boundary: space)
+        try expect(text == "hello ", "screen \(text)")
+        try expect(engine.systemLayout == .en, "layout")
     }
 
     func capitalizationIsPreserved() throws {
         let engine = makeEngine(layout: .en)
-        let plan = feed(engine, meant: "Привет", meantLayout: .ru, boundary: space)
-        try expect(plan?.insert == "Привет ", "insert \(plan?.insert ?? "nil")")
-        try expect(plan?.layout == .ru, "layout")
+        let text = screen(engine, meant: "Привет", meantLayout: .ru, boundary: space)
+        try expect(text == "Привет ", "screen \(text)")
+        try expect(engine.systemLayout == .ru, "layout")
     }
 
     func realWordsStay() throws {
@@ -94,7 +95,7 @@ final class EngineChecks {
         let engine = makeEngine(layout: .en)
         let strokes = try need(map.strokes(for: "привет", layout: .ru))
         for stroke in strokes {
-            try expect(engine.handle(.key(stroke, command: false, option: false, control: false)) == nil, "letter")
+            _ = engine.handle(.key(stroke, command: false, option: false, control: false))
         }
         try expect(engine.handle(.drop) == nil, "return")
     }
@@ -138,8 +139,13 @@ final class EngineChecks {
         let exceptions = ExceptionList()
         let engine = makeEngine(layout: .en, exceptions: exceptions)
         var now = Date(timeIntervalSince1970: 1_700_000_000)
-        let plan = feed(engine, meant: "привет", meantLayout: .ru, boundary: space, now: now)
-        try expect(plan?.reason == .auto, "auto")
+        let strokes = try need(map.strokes(for: "привет", layout: .ru))
+        var plan: ReplacePlan?
+        for stroke in strokes {
+            plan = engine.handle(.key(stroke, command: false, option: false, control: false), now: now) ?? plan
+        }
+        try expect(plan?.reason == .auto, "auto \(String(describing: plan))")
+        try expect(plan?.insert == "привет", "early \(plan?.insert ?? "nil")")
         now = now.addingTimeInterval(0.2)
         _ = engine.handle(.shift(down: true), now: now)
         _ = engine.handle(.shift(down: false), now: now)
@@ -147,9 +153,12 @@ final class EngineChecks {
         _ = engine.handle(.shift(down: true), now: now)
         let undo = engine.handle(.shift(down: false), now: now)
         try expect(undo?.reason == .undo, "undo \(String(describing: undo))")
-        try expect(undo?.insert == "ghbdtn ", "undo text \(undo?.insert ?? "nil")")
+        try expect(undo?.insert == "ghbdtn", "undo text \(undo?.insert ?? "nil")")
         try expect(exceptions.contains("ghbdtn"), "exception")
-        let again = feed(engine, meant: "привет", meantLayout: .ru, boundary: space, now: now.addingTimeInterval(1))
+        var again: ReplacePlan?
+        for stroke in strokes {
+            again = engine.handle(.key(stroke, command: false, option: false, control: false), now: now.addingTimeInterval(1)) ?? again
+        }
         try expect(again == nil, "second time \(String(describing: again))")
     }
 
@@ -185,14 +194,13 @@ final class EngineChecks {
 
     func backspaceKeepsTheWordInSync() throws {
         let engine = makeEngine(layout: .en)
-        let strokes = try need(map.strokes(for: "привет", layout: .ru))
+        let strokes = try need(map.strokes(for: "hello", layout: .en))
         for stroke in strokes {
             try expect(engine.handle(.key(stroke, command: false, option: false, control: false)) == nil, "letter")
         }
         _ = engine.handle(.backspace)
         try expect(engine.handle(.key(strokes[strokes.count - 1], command: false, option: false, control: false)) == nil, "retype")
-        let plan = engine.handle(.key(space, command: false, option: false, control: false))
-        try expect(plan?.insert == "привет ", "backspace sync \(plan?.insert ?? "nil")")
+        try expect(engine.handle(.key(space, command: false, option: false, control: false)) == nil, "hello stays")
     }
 
     func commonWordsAreCorrected() throws {
@@ -204,16 +212,16 @@ final class EngineChecks {
         let engineRU = makeEngine(layout: .en)
         for word in russian {
             total += 1
-            let plan = feed(engineRU, meant: word, meantLayout: .ru, boundary: space)
-            if plan?.insert == word + " " { hits += 1 } else { misses.append("\(word)->\(plan?.insert ?? "nil")") }
+            let text = screen(engineRU, meant: word, meantLayout: .ru, boundary: space)
+            if text == word + " " { hits += 1 } else { misses.append("\(word)->\(text)") }
             engineRU.reset()
             _ = engineRU.handle(.systemLayout(.en))
         }
         let engineEN = makeEngine(layout: .ru)
         for word in english {
             total += 1
-            let plan = feed(engineEN, meant: word, meantLayout: .en, boundary: space)
-            if plan?.insert == word + " " { hits += 1 } else { misses.append("\(word)->\(plan?.insert ?? "nil")") }
+            let text = screen(engineEN, meant: word, meantLayout: .en, boundary: space)
+            if text == word + " " { hits += 1 } else { misses.append("\(word)->\(text)") }
             engineEN.reset()
             _ = engineEN.handle(.systemLayout(.ru))
         }
@@ -294,6 +302,111 @@ final class EngineChecks {
         }
     }
 
+    func unfinishedWordSwitchesBeforeSpace() throws {
+        let engine = makeEngine(layout: .en)
+        let strokes = try need(map.strokes(for: "привет", layout: .ru))
+        var plan: ReplacePlan?
+        for stroke in strokes.prefix(3) {
+            plan = engine.handle(.key(stroke, command: false, option: false, control: false)) ?? plan
+        }
+        try expect(plan == nil, "ghb is an English word \(String(describing: plan))")
+        for stroke in strokes.dropFirst(3) {
+            plan = engine.handle(.key(stroke, command: false, option: false, control: false)) ?? plan
+        }
+        try expect(plan?.insert == "привет", "привет \(plan?.insert ?? "nil")")
+        try expect(plan?.layout == .ru, "layout \(String(describing: plan?.layout))")
+        let ghost = makeEngine(layout: .en)
+        try expect(feed(ghost, meant: "ghost", meantLayout: .en, boundary: nil) == nil, "ghost")
+        let partial = makeEngine(layout: .en)
+        let gho = try need(map.strokes(for: "gho", layout: .en))
+        for stroke in gho {
+            try expect(partial.handle(.key(stroke, command: false, option: false, control: false)) == nil, "gho")
+        }
+    }
+
+    func ghostAndMacStayWhileTyping() throws {
+        let engine = makeEngine(layout: .en)
+        try expect(feed(engine, meant: "mac", meantLayout: .en, boundary: nil) == nil, "mac")
+        try expect(feed(engine, meant: "mac", meantLayout: .en, boundary: space) == nil, "mac space")
+    }
+
+    func shortWordsSwitchBeforeSpace() throws {
+        let engine = makeEngine(layout: .en)
+        let keys = try need(map.strokes(for: "но", layout: .ru))
+        var plan: ReplacePlan?
+        for stroke in keys {
+            plan = engine.handle(.key(stroke, command: false, option: false, control: false)) ?? plan
+        }
+        try expect(plan?.insert == "но", "но \(plan?.insert ?? "nil")")
+        try expect(plan?.layout == .ru, "но layout")
+        let spaced = makeEngine(layout: .en)
+        let text = screen(spaced, meant: "не", meantLayout: .ru, boundary: space)
+        try expect(text == "не ", "не \(text)")
+        let own = makeEngine(layout: .en)
+        try expect(feed(own, meant: "ok", meantLayout: .en, boundary: space) == nil, "ok")
+        let russian = makeEngine(layout: .ru)
+        try expect(feed(russian, meant: "мы", meantLayout: .ru, boundary: space) == nil, "мы stays")
+        let english = makeEngine(layout: .en)
+        try expect(feed(english, meant: "to", meantLayout: .en, boundary: space) == nil, "to stays")
+        try expect(feed(english, meant: "a", meantLayout: .en, boundary: space) == nil, "a stays")
+        let ty = makeEngine(layout: .en)
+        let tyText = screen(ty, meant: "ты", meantLayout: .ru, boundary: space)
+        try expect(tyText == "ты ", "ты \(tyText)")
+        let my = makeEngine(layout: .en)
+        let myText = screen(my, meant: "мы", meantLayout: .ru, boundary: space)
+        try expect(myText == "мы ", "мы \(myText)")
+        let ya = makeEngine(layout: .en)
+        let yaText = screen(ya, meant: "я", meantLayout: .ru, boundary: space)
+        try expect(yaText == "я ", "я \(yaText)")
+        let article = makeEngine(layout: .ru)
+        try expect(screen(article, meant: "a", meantLayout: .en, boundary: space) == "a ", "a from ru")
+        let longer = makeEngine(layout: .en)
+        try expect(feed(longer, meant: "nsa", meantLayout: .en, boundary: space) == nil, "nsa")
+        let disabled = makeEngine(layout: .en)
+        disabled.disabledShortWords = ["но"]
+        var blocked: ReplacePlan?
+        for stroke in keys {
+            blocked = disabled.handle(.key(stroke, command: false, option: false, control: false)) ?? blocked
+        }
+        try expect(blocked == nil, "disabled но \(String(describing: blocked))")
+    }
+
+    func selectionDoubleShiftFlipsTheHighlight() throws {
+        let flipped = SelectionFlip.flip("ghbdtn, мир", using: map)
+        try expect(flipped.text == "привет, vbh", "flip \(flipped.text)")
+        try expect(flipped.layout == .ru, "flip layout")
+        let engine = makeEngine(layout: .en)
+        try expect(feed(engine, meant: "hello", meantLayout: .en, boundary: space) == nil, "hello")
+        var now = Date(timeIntervalSince1970: 1_700_000_300)
+        _ = engine.handle(.shift(down: true), now: now)
+        _ = engine.handle(.shift(down: false), now: now)
+        now = now.addingTimeInterval(0.2)
+        _ = engine.handle(.shift(down: true), now: now, selection: "ghbdtn, мир")
+        let plan = engine.handle(.shift(down: false), now: now, selection: "ghbdtn, мир")
+        try expect(plan?.reason == .selection, "selection \(String(describing: plan))")
+        try expect(plan?.insert == "привет, vbh", "selection text \(plan?.insert ?? "nil")")
+        try expect(plan?.layout == .ru, "selection layout")
+        try expect(engine.storedWordCount == 0, "buffer \(engine.storedWordCount)")
+        let plain = makeEngine(layout: .en)
+        try expect(feed(plain, meant: "hello", meantLayout: .en, boundary: space) == nil, "hello again")
+        now = Date(timeIntervalSince1970: 1_700_000_400)
+        _ = plain.handle(.shift(down: true), now: now)
+        _ = plain.handle(.shift(down: false), now: now)
+        now = now.addingTimeInterval(0.2)
+        _ = plain.handle(.shift(down: true), now: now)
+        let word = plain.handle(.shift(down: false), now: now)
+        try expect(word?.reason == .manualWord, "last word \(String(describing: word))")
+        try expect(word?.insert == "руддщ ", "last word text \(word?.insert ?? "nil")")
+    }
+
+    func bufferStaysBounded() throws {
+        let engine = makeEngine(layout: .en)
+        for _ in 0..<10_000 {
+            _ = feed(engine, meant: "mac", meantLayout: .en, boundary: space)
+        }
+        try expect(engine.storedWordCount <= 40, "tokens \(engine.storedWordCount)")
+    }
+
     private func makeEngine(layout: LayoutID, exceptions: ExceptionList = ExceptionList()) -> Engine {
         Engine(decoder: map, knowledge: Self.knowledge, exceptions: exceptions, layout: layout)
     }
@@ -332,6 +445,27 @@ final class EngineChecks {
             plan = next
         }
         return plan
+    }
+
+    private func screen(
+        _ engine: Engine,
+        meant word: String,
+        meantLayout: LayoutID,
+        boundary: Stroke?
+    ) -> String {
+        let strokes = map.strokes(for: word, layout: meantLayout) ?? []
+        let keys = boundary.map { strokes + [$0] } ?? strokes
+        var text = ""
+        for stroke in keys {
+            let before = engine.systemLayout
+            text += render([stroke], before)
+            if let plan = engine.handle(.key(stroke, command: false, option: false, control: false)) {
+                let drop = min(plan.deleteCount, text.count)
+                text.removeLast(drop)
+                text += plan.insert
+            }
+        }
+        return text
     }
 
     private func render(_ strokes: [Stroke], _ layout: LayoutID) -> String {

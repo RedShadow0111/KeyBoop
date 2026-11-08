@@ -1,3 +1,4 @@
+import ApplicationServices
 import Carbon
 @preconcurrency import CoreGraphics
 import Foundation
@@ -56,6 +57,7 @@ final class EventMonitor {
     func stop() {
         if let port {
             CGEvent.tapEnable(tap: port, enable: false)
+            CFMachPortInvalidate(port)
         }
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
@@ -81,22 +83,40 @@ final class EventMonitor {
             return Unmanaged.passUnretained(event)
         }
 
-        guard let model else { return Unmanaged.passUnretained(event) }
-        syncSystemLayout()
+        let input = Self.parse(type, event)
+        DispatchQueue.main.async { [weak self] in
+            self?.deliver(input)
+        }
+        return Unmanaged.passUnretained(event)
+    }
 
+    private func deliver(_ input: Input) {
+        guard let model else { return }
+        syncSystemLayout()
         if !model.shouldProcess || IsSecureEventInputEnabled() || model.isFrontmostExcluded {
             engine.reset()
             model.noteBlocked(secure: IsSecureEventInputEnabled())
-            return Unmanaged.passUnretained(event)
+            return
         }
-
         model.noteReady()
-        if let plan = engine.handle(Self.parse(type, event)) {
-            replayer.play(plan) { layout in
-                SystemLayouts.select(layout)
+        var selection: String?
+        var element: AXUIElement?
+        if case .shift(down: false) = input, let found = SelectionReader.current() {
+            selection = found.text
+            element = found.element
+        }
+        if let plan = engine.handle(input, selection: selection) {
+            if plan.reason == .selection, let element {
+                SystemLayouts.select(plan.layout)
+                if !SelectionReader.replace(element, with: plan.insert) {
+                    replayer.play(plan) { _ in }
+                }
+            } else {
+                replayer.play(plan) { layout in
+                    SystemLayouts.select(layout)
+                }
             }
         }
-        return Unmanaged.passUnretained(event)
     }
 
     private func syncSystemLayout() {

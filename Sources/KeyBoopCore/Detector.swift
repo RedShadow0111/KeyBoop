@@ -28,23 +28,51 @@ public enum Decision: Equatable, Sendable {
 public struct Detector: Sendable {
     private let knowledge: Knowledge
     private let exceptions: ExceptionList
+    public var disabledShortWords: Set<String> = []
 
     public init(knowledge: Knowledge, exceptions: ExceptionList) {
         self.knowledge = knowledge
         self.exceptions = exceptions
     }
 
+    public func isDictionaryPrefix(_ letters: String, _ layout: LayoutID) -> Bool {
+        knowledge.isDictionaryPrefix(letters, layout)
+    }
+
+    public func isLongerDictionaryPrefix(_ letters: String, _ layout: LayoutID) -> Bool {
+        knowledge.isLongerDictionaryPrefix(letters, layout)
+    }
+
+    public func containsWord(_ letters: String, _ layout: LayoutID) -> Bool {
+        knowledge.contains(letters, layout)
+    }
+
+    public func impossible(_ letters: String, _ layout: LayoutID) -> Bool {
+        knowledge.isImpossible(letters, layout)
+    }
+
     public func decide(_ observation: Observation) -> Decision {
         if observation.blockedByContext { return .keep }
         let currentLetters = TextNorm.lookupLetters(observation.currentRaw)
         let alternateLetters = TextNorm.lookupLetters(observation.alternateRaw)
-        if currentLetters.count < 3 { return .keep }
+        if currentLetters.isEmpty { return .keep }
         let alternateLayout = observation.currentLayout.opposite
+        let short = Self.shortPair(
+            currentLetters: currentLetters,
+            alternateLetters: alternateLetters,
+            currentLayout: observation.currentLayout,
+            alternateLayout: alternateLayout,
+            disabled: disabledShortWords
+        )
+        if currentLetters.count < 3 && !short { return .keep }
         let alternateInDictionary = knowledge.contains(alternateLetters, alternateLayout)
         let dotIsLetter = alternateInDictionary
             || (alternateLetters.count >= 5 && knowledge.isPlausible(alternateLetters, alternateLayout))
         if StopRules.blocked(raw: observation.currentRaw, letters: currentLetters, allowDot: dotIsLetter) { return .keep }
         if exceptions.contains(currentLetters) || exceptions.contains(alternateLetters) { return .keep }
+        if short {
+            return .replace(alternateLayout)
+        }
 
         if knowledge.contains(currentLetters, observation.currentLayout) { return .keep }
 
@@ -77,6 +105,18 @@ public struct Detector: Sendable {
             }
         }
         return .keep
+    }
+
+    static func shortPair(
+        currentLetters: String,
+        alternateLetters: String,
+        currentLayout: LayoutID,
+        alternateLayout: LayoutID,
+        disabled: Set<String>
+    ) -> Bool {
+        guard alternateLetters.count <= 2, currentLetters.count <= 2 else { return false }
+        guard ShortWords.allows(alternateLetters, layout: alternateLayout, disabled: disabled) else { return false }
+        return !ShortWords.allows(currentLetters, layout: currentLayout, disabled: disabled)
     }
 }
 

@@ -7,6 +7,7 @@ public struct ReplacePlan: Equatable, Sendable {
         case manualWord
         case manualPhrase
         case undo
+        case selection
     }
 
     public var deleteCount: Int
@@ -34,10 +35,13 @@ public enum Input: Equatable, Sendable {
 public final class Engine: @unchecked Sendable {
     private let lock = NSLock()
     private let decoder: any LayoutDecoding
-    private let detector: Detector
+    private var detector: Detector
     private let exceptions: ExceptionList
 
     public var gesturesEnabled = true
+    public var disabledShortWords: Set<String> = [] {
+        didSet { detector.disabledShortWords = disabledShortWords }
+    }
     public private(set) var systemLayout: LayoutID
 
     private var open: [Stroke] = []
@@ -58,13 +62,19 @@ public final class Engine: @unchecked Sendable {
         self.openLayout = layout
     }
 
+    public var storedWordCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return tokens.count
+    }
+
     public func reset() {
         lock.lock()
         defer { lock.unlock() }
         clearBuffer()
     }
 
-    public func handle(_ input: Input, now: Date = Date()) -> ReplacePlan? {
+    public func handle(_ input: Input, now: Date = Date(), selection: String? = nil) -> ReplacePlan? {
         lock.lock()
         defer { lock.unlock() }
         switch input {
@@ -86,7 +96,7 @@ public final class Engine: @unchecked Sendable {
             applyBackspace()
             return nil
         case .shift(let down):
-            return shiftGesture(down: down, now: now)
+            return shiftGesture(down: down, now: now, selection: selection)
         case .key(let stroke, let command, let option, let control):
             if command || option || control {
                 if shiftHeld { shiftDirty = true }
@@ -111,7 +121,8 @@ public final class Engine: @unchecked Sendable {
         if isWordCharacter(stroke) || isDigit(stroke) || isURLContinuation(stroke) {
             if open.isEmpty { openLayout = systemLayout }
             open.append(stroke)
-            return urlReplacement(now: now)
+            if let plan = urlReplacement(now: now) { return plan }
+            return earlyReplacement(now: now)
         }
         if stroke.keyCode == KeyCode.space || isPunctuation(stroke) {
             return closeWord(with: stroke, now: now)
@@ -133,6 +144,36 @@ public final class Engine: @unchecked Sendable {
             reason: .url,
             now: now
         )
+    }
+
+    private func earlyReplacement(now: Date) -> ReplacePlan? {
+        if contextBlock || open.isEmpty || open.contains(where: isDigit) { return nil }
+        let from = openLayout
+        let currentRaw = render(open, from)
+        let alternateRaw = render(open, from.opposite)
+        if Self.extendsURL(alternateRaw) || Self.isURL(alternateRaw) { return nil }
+        let currentLetters = TextNorm.lookupLetters(currentRaw)
+        let alternateLetters = TextNorm.lookupLetters(alternateRaw)
+        guard !currentLetters.isEmpty else { return nil }
+        let target = from.opposite
+        let short = Detector.shortPair(
+            currentLetters: currentLetters,
+            alternateLetters: alternateLetters,
+            currentLayout: from,
+            alternateLayout: target,
+            disabled: detector.disabledShortWords
+        )
+        if detector.isLongerDictionaryPrefix(currentLetters, from) { return nil }
+        if !short && detector.isDictionaryPrefix(currentLetters, from) { return nil }
+        let wholeWord = alternateLetters.count >= 3 && detector.containsWord(alternateLetters, target)
+        guard short || wholeWord else { return nil }
+        if exceptions.contains(currentLetters) || exceptions.contains(alternateLetters) { return nil }
+        if StopRules.blocked(raw: currentRaw, letters: currentLetters, allowDot: wholeWord) { return nil }
+        if short {
+            return commit(strokes: open, trailing: [], from: from, to: target, reason: .auto, now: now)
+        }
+        guard detector.impossible(currentLetters, from) else { return nil }
+        return commit(strokes: open, trailing: [], from: from, to: target, reason: .auto, now: now)
     }
 
     private func closeWord(with boundary: Stroke, now: Date) -> ReplacePlan? {
@@ -201,7 +242,7 @@ public final class Engine: @unchecked Sendable {
         return ReplacePlan(deleteCount: old.count, insert: new, layout: to, reason: reason)
     }
 
-    private func shiftGesture(down: Bool, now: Date) -> ReplacePlan? {
+    private func shiftGesture(down: Bool, now: Date, selection: String?) -> ReplacePlan? {
         if down {
             shiftHeld = true
             shiftDirty = false
@@ -213,15 +254,33 @@ public final class Engine: @unchecked Sendable {
         if dirty || !gesturesEnabled { return nil }
         cleanShiftUps.removeAll { now.timeIntervalSince($0) > 0.7 }
         cleanShiftUps.append(now)
+        let selected = selection.flatMap { text -> String? in
+            let trimmed = text
+            guard !trimmed.isEmpty, trimmed.count <= 2000 else { return nil }
+            return trimmed
+        }
         if cleanShiftUps.count >= 3 {
             cleanShiftUps.removeAll()
+            if selected != nil { return nil }
             let target = pendingGestureTarget ?? systemLayout.opposite
             return convertPhrase(to: target)
         }
         if cleanShiftUps.count == 2 {
+            if let selected {
+                return convertSelection(selected)
+            }
             return convertLastWord(now: now)
         }
         return nil
+    }
+
+    private func convertSelection(_ text: String) -> ReplacePlan? {
+        let flipped = SelectionFlip.flip(text, using: decoder)
+        guard flipped.text != text else { return nil }
+        clearBuffer()
+        systemLayout = flipped.layout
+        openLayout = flipped.layout
+        return ReplacePlan(deleteCount: 1, insert: flipped.text, layout: flipped.layout, reason: .selection)
     }
 
     private func convertLastWord(now: Date) -> ReplacePlan? {

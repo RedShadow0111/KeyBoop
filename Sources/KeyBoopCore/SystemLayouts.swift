@@ -81,6 +81,7 @@ public enum SystemLayouts {
 public final class SystemLayoutDecoder: LayoutDecoding, @unchecked Sendable {
     private let lock = NSLock()
     private var layouts: [LayoutID: Data] = [:]
+    private var reverse: [LayoutID: [Character: Stroke]] = [:]
     private let fallback = StandardKeyMap.shared
 
     public init() {}
@@ -92,8 +93,22 @@ public final class SystemLayoutDecoder: LayoutDecoding, @unchecked Sendable {
                 found[layout] = data
             }
         }
+        var flipped: [LayoutID: [Character: Stroke]] = [:]
+        for layout in LayoutID.allCases {
+            var map: [Character: Stroke] = [:]
+            for code: UInt16 in 0...0x7E {
+                for shifted in [false, true] {
+                    let stroke = Stroke(keyCode: code, shift: shifted)
+                    let glyph = found[layout].flatMap { Self.translate($0, stroke) } ?? fallback.glyph(for: stroke, layout: layout)
+                    guard let glyph, map[glyph.character] == nil else { continue }
+                    map[glyph.character] = stroke
+                }
+            }
+            flipped[layout] = map
+        }
         lock.lock()
         layouts = found
+        reverse = flipped
         lock.unlock()
     }
 
@@ -111,6 +126,14 @@ public final class SystemLayoutDecoder: LayoutDecoding, @unchecked Sendable {
             return glyph
         }
         return fallback.glyph(for: stroke, layout: layout)
+    }
+
+    public func stroke(for character: Character, layout: LayoutID) -> Stroke? {
+        lock.lock()
+        let cached = reverse[layout]?[character]
+        lock.unlock()
+        if let cached { return cached }
+        return fallback.stroke(for: character, layout: layout)
     }
 
     static func translate(_ data: Data, _ stroke: Stroke) -> Glyph? {

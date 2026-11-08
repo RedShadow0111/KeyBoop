@@ -1,60 +1,186 @@
+import KeyBoopCore
 import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: AppModel
 
+    private let wordColumns = [
+        GridItem(.flexible(minimum: 70), spacing: 4),
+        GridItem(.flexible(minimum: 70), spacing: 4),
+        GridItem(.flexible(minimum: 70), spacing: 4),
+    ]
+
     var body: some View {
-        Form {
-            Toggle("Автоисправление", isOn: $model.enabled)
-            Toggle("Двойной и тройной Shift", isOn: $model.gesturesEnabled)
-            Toggle("Запускать при входе", isOn: $model.launchAtLogin)
-            if !model.loginMessage.isEmpty {
-                Text(model.loginMessage)
-                    .font(.callout)
+        VStack(alignment: .leading, spacing: PanelMetrics.section) {
+            HStack(spacing: PanelMetrics.row) {
+                KeyBadge(size: 28)
+                Text("KeyBoop")
+                    .font(PanelMetrics.title)
+                Spacer(minLength: 8)
+                Text(model.status)
+                    .font(PanelMetrics.body)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
-            Section("Разрешения") {
-                LabeledContent("Мониторинг ввода") {
-                    Text(model.listenGranted ? "разрешён" : "нужен доступ")
-                }
-                LabeledContent("Универсальный доступ") {
-                    Text(model.accessGranted ? "разрешён" : "нужен доступ")
-                }
-                HStack {
-                    Button("Открыть мониторинг ввода") { model.openListenSettings() }
-                    Button("Открыть универсальный доступ") { model.openAccessSettings() }
-                }
-            }
+            HStack(alignment: .top, spacing: PanelMetrics.section) {
+                VStack(alignment: .leading, spacing: PanelMetrics.section) {
+                    sectionTitle("Набор")
+                    PanelCard {
+                        VStack(alignment: .leading, spacing: PanelMetrics.row) {
+                            Toggle("Автоисправление", isOn: $model.enabled)
+                            Toggle("Двойной и тройной Shift", isOn: $model.gesturesEnabled)
+                            Toggle("Запускать при входе", isOn: $model.launchAtLogin)
+                            if !model.loginMessage.isEmpty {
+                                Text(model.loginMessage)
+                                    .font(PanelMetrics.body)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .font(PanelMetrics.body)
+                    }
 
-            Section("Не исправлять в приложениях") {
-                if let name = model.lastOtherName, let id = model.lastOtherBundleID {
-                    Text("Последнее другое приложение: \(name) (\(id))")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    sectionTitle("Разрешения")
+                    PanelCard {
+                        VStack(alignment: .leading, spacing: PanelMetrics.row) {
+                            permissionLine(
+                                title: "Мониторинг ввода",
+                                granted: model.listenGranted,
+                                action: model.requestListen
+                            )
+                            permissionLine(
+                                title: "Универсальный доступ",
+                                granted: model.accessGranted,
+                                action: model.requestAccess
+                            )
+                            if !model.permissionNote.isEmpty {
+                                Text(model.permissionNote)
+                                    .font(PanelMetrics.body)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if model.showRelaunch {
+                                Button("Перезапустить") { model.relaunch() }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+
+                    sectionTitle("Кроме приложений")
+                    PanelCard {
+                        VStack(alignment: .leading, spacing: PanelMetrics.row) {
+                            ForEach(model.excluded, id: \.self) { id in
+                                HStack(spacing: PanelMetrics.row) {
+                                    Text(id)
+                                        .font(PanelMetrics.body)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer(minLength: 8)
+                                    Button("Удалить") { model.removeExcluded(id) }
+                                        .controlSize(.small)
+                                }
+                                .frame(minHeight: 22)
+                            }
+                            Button("Добавить текущее") { model.addLastOtherApp() }
+                                .controlSize(.small)
+                        }
+                    }
+
+                    sectionTitle("Обновление")
+                    PanelCard {
+                        PanelUpdateRow(model: model)
+                    }
                 }
-                List {
-                    ForEach(model.excluded, id: \.self) { id in
-                        HStack {
-                            Text(id)
-                            Spacer()
-                            Button("Удалить") { model.removeExcluded(id) }
-                                .buttonStyle(.borderless)
+                .frame(width: 292)
+
+                VStack(alignment: .leading, spacing: PanelMetrics.section) {
+                    sectionTitle("Слова")
+                    PanelCard {
+                        LazyVGrid(columns: wordColumns, alignment: .leading, spacing: 2) {
+                            ForEach(ShortWords.pairs(), id: \.word) { pair in
+                                Toggle(isOn: shortBinding(pair.word)) {
+                                    HStack(spacing: 4) {
+                                        Text(pair.word)
+                                        Text(pair.other)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                                }
+                                .toggleStyle(.checkbox)
+                                .frame(height: 18)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: PanelMetrics.row) {
+                        sectionTitle("Исключения")
+                        Spacer(minLength: 8)
+                        Button("Сбросить") { model.resetExceptions() }
+                            .controlSize(.small)
+                    }
+                    PanelCard {
+                        if model.exceptionWords.isEmpty {
+                            Text("Пока нет. Двойной Shift после автозамены запоминает слово.")
+                                .font(PanelMetrics.body)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            ChipFlow(spacing: 6) {
+                                ForEach(model.exceptionWords, id: \.self) { word in
+                                    Button(action: { model.removeException(word) }) {
+                                        Text(word)
+                                            .font(.system(size: 11))
+                                            .padding(.horizontal, 6)
+                                            .frame(height: 18)
+                                            .background(
+                                                Capsule(style: .continuous)
+                                                    .fill(Color.primary.opacity(0.08))
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
                 }
-                .frame(minHeight: 120)
-                Button("Добавить последнее приложение") { model.addLastOtherApp() }
-            }
-
-            Section("Выученные исключения") {
-                Text("Слов, которые не нужно трогать: \(model.exceptionCount)")
-                Button("Сбросить выученные слова") { model.resetExceptions() }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .formStyle(.grouped)
-        .padding(8)
-        .frame(width: 520, height: 560)
+        .padding(PanelMetrics.outer)
+        .frame(width: PanelMetrics.settingsWidth)
+        .fixedSize(horizontal: true, vertical: true)
+        .background(.regularMaterial)
+    }
+
+    private func permissionLine(title: String, granted: Bool, action: @escaping () -> Void) -> some View {
+        HStack(spacing: PanelMetrics.row) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .foregroundStyle(granted ? Color.green : Color.orange)
+                .frame(width: 16)
+            Text(title)
+                .font(PanelMetrics.body)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if granted {
+                Text("разрешён")
+                    .font(PanelMetrics.body)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Разрешить", action: action)
+                    .controlSize(.small)
+            }
+        }
+        .frame(minHeight: 22)
+    }
+
+    private func shortBinding(_ word: String) -> Binding<Bool> {
+        Binding(
+            get: { !model.disabledShortWords.contains(word) },
+            set: { model.setShortWord(word, enabled: $0) }
+        )
     }
 }
 
@@ -63,61 +189,67 @@ struct OnboardingView: View {
     var onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("KeyBoop правит слово, набранное не в той раскладке, и переключает её. Текст остаётся на этом Mac.")
-                .fixedSize(horizontal: false, vertical: true)
-            permissionRow(
+        VStack(alignment: .leading, spacing: PanelMetrics.section) {
+            MenuBanner(status: "Текст остаётся на этом Mac")
+            permissionCard(
                 title: "Мониторинг ввода",
+                detail: "Чтобы видеть физические клавиши. KeyBoop сам появится в списке.",
                 granted: model.listenGranted,
-                detail: "Чтобы видеть физические клавиши, а не уже перепутанные буквы.",
-                actionTitle: "Разрешить",
-                action: model.requestListen,
-                settings: model.openListenSettings
+                action: model.requestListen
             )
-            permissionRow(
+            permissionCard(
                 title: "Универсальный доступ",
-                granted: model.accessGranted,
                 detail: "Чтобы стереть ошибочное слово и напечатать его заново.",
-                actionTitle: "Разрешить",
-                action: model.requestAccess,
-                settings: model.openAccessSettings
+                granted: model.accessGranted,
+                action: model.requestAccess
             )
-            Text("Двойной Shift переводит последнее слово. Тройной — всю фразу. Повторный двойной Shift сразу после автозамены отменяет её.")
-                .font(.callout)
+            if !model.permissionNote.isEmpty {
+                Text(model.permissionNote)
+                    .font(PanelMetrics.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.showRelaunch {
+                Button("Перезапустить") { model.relaunch() }
+                    .controlSize(.small)
+            }
+            Text("Двойной Shift переводит последнее слово или выделение. Тройной — всю фразу.")
+                .font(PanelMetrics.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Spacer()
+                Spacer(minLength: 8)
                 Button(model.listenGranted && model.accessGranted ? "Готово" : "Позже") {
                     onClose()
                 }
+                .controlSize(.small)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
-        .frame(width: 460)
+        .padding(PanelMetrics.outer)
+        .frame(width: PanelMetrics.menuWidth)
+        .background(.regularMaterial)
     }
 
-    private func permissionRow(
-        title: String,
-        granted: Bool,
-        detail: String,
-        actionTitle: String,
-        action: @escaping () -> Void,
-        settings: @escaping () -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
-            Text(detail)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Text(granted ? "Разрешено" : "Пока не разрешено")
-                    .foregroundStyle(granted ? .green : .orange)
-                Spacer()
-                Button(actionTitle, action: action)
-                Button("Настройки…", action: settings)
+    private func permissionCard(title: String, detail: String, granted: Bool, action: @escaping () -> Void) -> some View {
+        PanelCard {
+            VStack(alignment: .leading, spacing: PanelMetrics.row) {
+                HStack(spacing: PanelMetrics.row) {
+                    Text(title)
+                        .font(PanelMetrics.title)
+                    Spacer(minLength: 8)
+                    Text(granted ? "Разрешено" : "Пока не разрешено")
+                        .font(PanelMetrics.body)
+                        .foregroundStyle(granted ? Color.green : Color.orange)
+                }
+                Text(detail)
+                    .font(PanelMetrics.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !granted {
+                    Button("Разрешить", action: action)
+                        .controlSize(.small)
+                }
             }
         }
     }

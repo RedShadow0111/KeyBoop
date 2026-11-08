@@ -12,9 +12,14 @@ let package = Package(
             name: "KeyBoopCore",
             resources: [.copy("Dictionaries")]
         ),
+        .target(name: "KeyBoopBrand"),
         .executableTarget(
             name: "KeyBoop",
-            dependencies: ["KeyBoopCore"]
+            dependencies: ["KeyBoopCore", "KeyBoopBrand"]
+        ),
+        .executableTarget(
+            name: "KeyBoopIcon",
+            dependencies: ["KeyBoopBrand"]
         ),
         .executableTarget(
             name: "KeyBoopSelfTest",

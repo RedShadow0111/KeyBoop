@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import KeyBoopBrand
 import KeyBoopCore
 import SwiftUI
 
@@ -7,12 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
     let monitor: EventMonitor
     private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var timer: Timer?
+    private var activationObserver: NSObjectProtocol?
 
     override init() {
-        let exceptions = ExceptionList(ExceptionStore.load())
+        let exceptions = ExceptionList(ordered: ExceptionStore.load())
         let model = AppModel(exceptions: exceptions)
         let knowledge: Knowledge
         do {
@@ -25,8 +29,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let layout = SystemLayouts.current() ?? .en
         let engine = Engine(decoder: decoder, knowledge: knowledge, exceptions: exceptions, layout: layout)
         model.attach(engine: engine)
-        exceptions.onChange = { words in
-            ExceptionStore.save(words)
+        exceptions.onChange = { [weak model] words in
+            let ordered = exceptions.ordered
+            let recent = exceptions.recent
+            ExceptionStore.save(ordered)
+            Task { @MainActor in
+                model?.exceptionWords = recent
+                model?.exceptionCount = words.count
+            }
         }
         self.model = model
         self.monitor = EventMonitor(engine: engine)
@@ -36,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        buildMenu()
+        buildStatusItem()
         model.refreshPermissions()
         model.noteFrontmost(NSWorkspace.shared.frontmostApplication)
         if model.shouldProcess {
@@ -48,100 +58,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.tick()
             }
         }
+        model.checkForUpdate()
         if !model.listenGranted || !model.accessGranted {
             showOnboarding()
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        timer = nil
+        if let activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
+        PermissionGuide.shared.dismiss()
         monitor.stop()
     }
 
     private func tick() {
         model.refreshPermissions()
-        model.exceptionCount = model.exceptions.count
-        if model.listenGranted {
-            if !monitor.isRunning {
-                _ = monitor.start()
+        model.noteExceptions()
+        if model.listenGranted, !monitor.isRunning {
+            if !monitor.start() {
+                model.noteListenNeedsRelaunch()
             }
         }
-        rebuildMenu()
     }
 
     private func observeActivation() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(frontmostChanged(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
-    }
-
-    @objc private func frontmostChanged(_ notification: Notification) {
-        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-        model.noteFrontmost(app)
-        rebuildMenu()
-    }
-
-    private func buildMenu() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "KeyBoop") {
-            image.isTemplate = true
-            item.button?.image = image
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated {
+                self?.model.noteFrontmost(app)
+            }
         }
+    }
+
+    private func buildStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let mark = BrandMark.image(side: 18, template: true)
+        item.button?.image = mark
+        item.button?.target = self
+        item.button?.action = #selector(togglePanel)
         statusItem = item
-        rebuildMenu()
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: MenuPanelView(
+            model: model,
+            onSettings: { [weak self] in self?.showSettings() },
+            onQuit: { NSApp.terminate(nil) }
+        ))
+        self.popover = popover
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-        let status = NSMenuItem(title: model.status, action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-        menu.addItem(.separator())
-
-        let enabled = NSMenuItem(title: "Включено", action: #selector(toggleEnabled), keyEquivalent: "")
-        enabled.state = model.enabled ? .on : .off
-        enabled.target = self
-        menu.addItem(enabled)
-
-        let paused = NSMenuItem(title: "Пауза", action: #selector(togglePaused), keyEquivalent: "")
-        paused.state = model.paused ? .on : .off
-        paused.target = self
-        menu.addItem(paused)
-
-        menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Настройки…", action: #selector(showSettings), keyEquivalent: ",")
-        settings.target = self
-        menu.addItem(settings)
-        let permissions = NSMenuItem(title: "Разрешения…", action: #selector(showOnboarding), keyEquivalent: "")
-        permissions.target = self
-        menu.addItem(permissions)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Выйти", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-        statusItem?.menu = menu
-    }
-
-    @objc private func toggleEnabled() {
-        model.enabled.toggle()
-        rebuildMenu()
-    }
-
-    @objc private func togglePaused() {
-        model.paused.toggle()
-        if model.paused { monitor.engine.reset() }
-        rebuildMenu()
+    @objc private func togglePanel() {
+        guard let button = statusItem?.button, let popover else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        model.refreshPermissions()
+        model.noteExceptions()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     @objc private func showSettings() {
+        popover?.performClose(nil)
         if settingsWindow == nil {
             let host = NSHostingController(rootView: SettingsView(model: model))
             let window = NSWindow(contentViewController: host)
             window.title = "KeyBoop"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.isReleasedWhenClosed = false
+            host.view.layoutSubtreeIfNeeded()
+            window.setContentSize(host.view.fittingSize)
             settingsWindow = window
         }
         settingsWindow?.center()
@@ -149,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    @objc private func showOnboarding() {
+    private func showOnboarding() {
         if onboardingWindow == nil {
             let host = NSHostingController(rootView: OnboardingView(model: model, onClose: { [weak self] in
                 self?.onboardingWindow?.close()
@@ -164,10 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-
-    @objc private func quit() {
-        NSApp.terminate(nil)
-    }
 }
 
 @MainActor
@@ -176,10 +167,37 @@ final class AppKeeper {
     var delegate: AppDelegate?
 }
 
+@MainActor
+enum SingleInstance {
+    private static var descriptor: Int32 = -1
+
+    static func claim() -> Bool {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("KeyBoop", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("instance.lock").path
+        descriptor = open(path, O_CREAT | O_RDWR, 0o644)
+        guard descriptor >= 0 else { return true }
+        if flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+            close(descriptor)
+            descriptor = -1
+            return false
+        }
+        return true
+    }
+}
+
 @main
 enum KeyBoopMain {
     static func main() {
         MainActor.assumeIsolated {
+            guard SingleInstance.claim() else {
+                let pid = ProcessInfo.processInfo.processIdentifier
+                NSRunningApplication.runningApplications(withBundleIdentifier: "com.keyboop.app")
+                    .first { $0.processIdentifier != pid }?
+                    .activate()
+                exit(0)
+            }
             let delegate = AppDelegate()
             AppKeeper.shared.delegate = delegate
             let app = NSApplication.shared

@@ -11,11 +11,15 @@ public enum KnowledgeError: Error, CustomStringConvertible {
 public final class Knowledge: @unchecked Sendable {
     private let en: Set<String>
     private let ru: Set<String>
+    private let enSorted: [String]
+    private let ruSorted: [String]
     private let model: TrigramModel
 
     public init(english: Set<String>, russian: Set<String>) {
         self.en = english
         self.ru = russian
+        self.enSorted = english.sorted()
+        self.ruSorted = russian.sorted()
         self.model = TrigramModel(english: english, russian: russian)
     }
 
@@ -65,6 +69,46 @@ public final class Knowledge: @unchecked Sendable {
         case .en: en.contains(letters)
         case .ru: ru.contains(letters)
         }
+    }
+
+    /// True when some dictionary word of this language begins with `letters`, including the word itself.
+    public func isDictionaryPrefix(_ letters: String, _ layout: LayoutID) -> Bool {
+        guard !letters.isEmpty else { return false }
+        let words = layout == .en ? enSorted : ruSorted
+        var low = 0
+        var high = words.count
+        while low < high {
+            let mid = (low + high) / 2
+            if words[mid] < letters {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        guard low < words.count else { return false }
+        return words[low].hasPrefix(letters)
+    }
+
+    /// A longer dictionary word begins with `letters`. The word itself does not count.
+    public func isLongerDictionaryPrefix(_ letters: String, _ layout: LayoutID) -> Bool {
+        guard !letters.isEmpty else { return false }
+        let words = layout == .en ? enSorted : ruSorted
+        var low = 0
+        var high = words.count
+        while low < high {
+            let mid = (low + high) / 2
+            if words[mid] < letters {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        var index = low
+        if index < words.count, words[index] == letters {
+            index += 1
+        }
+        guard index < words.count else { return false }
+        return words[index].count > letters.count && words[index].hasPrefix(letters)
     }
 
     public func score(_ letters: String, _ layout: LayoutID) -> Float {

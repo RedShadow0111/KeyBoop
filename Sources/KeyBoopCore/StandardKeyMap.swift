@@ -1,5 +1,6 @@
 public protocol LayoutDecoding: Sendable {
     func glyph(for stroke: Stroke, layout: LayoutID) -> Glyph?
+    func stroke(for character: Character, layout: LayoutID) -> Stroke?
 }
 
 /// Reference ЙЦУКЕН / ABC map used in tests and when a system layout has no Unicode data.
